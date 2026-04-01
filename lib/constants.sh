@@ -11,7 +11,6 @@ BOXER_DEFAULT_MEMORY="8g"
 BOXER_DEFAULT_NETWORK="restricted"
 
 # Container paths
-BOXER_CONTAINER_WORKSPACE="/workspace"
 BOXER_CONTAINER_USER="agent"
 BOXER_CONTAINER_HOME="/home/agent"
 

@@ -25,7 +25,7 @@ if [[ "$(id -u)" == "0" ]]; then
     # Fix git "dubious ownership" for the bind-mounted workspace.
     # The repo is owned by root but git runs as agent (uid 1000).
     # The host .gitconfig is read-only, so we inject into /etc/gitconfig.
-    git config --system safe.directory /workspace
+    git config --system safe.directory "${BOXER_WORKSPACE:-/workspace}"
 
     # One-time hint about Claude Switcher — append to agent's .bashrc so it
     # surfaces on interactive shell login (not just in docker logs)

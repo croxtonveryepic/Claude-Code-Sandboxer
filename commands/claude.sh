@@ -58,8 +58,11 @@ HELP
         bash -c 'command -v cs >/dev/null 2>&1 && cs freshen --quiet' 2>/dev/null || true
 
     # Launch Claude Code CLI
+    local workspace
+    workspace="$(get_label "$name" "boxer.workspace")"
+
     log_info "Launching Claude Code in '$name'..."
-    local exec_cmd=(docker exec -it --user "$BOXER_CONTAINER_USER" "$name")
+    local exec_cmd=(docker exec -it -w "$workspace" --user "$BOXER_CONTAINER_USER" "$name")
     exec_cmd+=(claude --dangerously-skip-permissions)
     exec_cmd+=("${claude_args[@]}")
 

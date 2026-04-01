@@ -43,10 +43,7 @@ HELP
 
     log_info "Opening firewall on '$name'..."
 
-    docker exec --user root "$name" bash -c '
-        iptables -F OUTPUT 2>/dev/null || true
-        iptables -P OUTPUT ACCEPT
-    '
+    docker exec --user root "$name" bash -c 'iptables -F OUTPUT 2>/dev/null || true && iptables -P OUTPUT ACCEPT'
 
     log_success "Firewall opened on '$name' — all outbound traffic allowed."
     log_warn "Run 'boxer close $name' to restore the restricted allowlist."

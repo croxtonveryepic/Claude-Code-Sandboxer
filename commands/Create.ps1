@@ -69,6 +69,10 @@ Options:
     }
     $dockerRepoPath = ConvertTo-DockerPath $RepoPath
 
+    # Workspace mount point inside the container, named after the repo
+    $repoBasename = Split-Path $RepoPath -Leaf
+    $workspace = "$($script:BOXER_CONTAINER_HOME)/$repoBasename"
+
     # Ensure the boxer image is built
     Initialize-BoxerImage
 
@@ -86,6 +90,7 @@ Options:
         "--label", "boxer.created.at=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
         "--label", "boxer.version=$($script:BOXER_VERSION)"
         "--label", "boxer.network=$Network"
+        "--label", "boxer.workspace=$workspace"
         # Resource limits
         "--cpus", $Cpu
         "--memory", $Memory
@@ -93,7 +98,7 @@ Options:
         "--cap-add", "NET_ADMIN"
         "--security-opt", "no-new-privileges"
         # Repo mount
-        "-v", "${dockerRepoPath}:$($script:BOXER_CONTAINER_WORKSPACE)"
+        "-v", "${dockerRepoPath}:${workspace}"
         # Claude config persistence via named volumes
         "-v", "$($script:BOXER_VOLUME_PREFIX)-${Name}-claude-config:$($script:BOXER_CONTAINER_HOME)/.claude"
         "-v", "$($script:BOXER_VOLUME_PREFIX)-${Name}-claude-data:$($script:BOXER_CONTAINER_HOME)/.local/share/claude"
@@ -131,7 +136,8 @@ Options:
     $cmd += "-e", "GIT_CONFIG_VALUE_0=input"
     $cmd += "-e", "BOXER_CONTAINER=true"
     $cmd += "-e", "BOXER_CONTAINER_NAME=$Name"
-    $cmd += "-e", "BOXER_REPO_NAME=$(Split-Path $RepoPath -Leaf)"
+    $cmd += "-e", "BOXER_REPO_NAME=$repoBasename"
+    $cmd += "-e", "BOXER_WORKSPACE=$workspace"
 
     # Extra firewall domains
     if (-not [string]::IsNullOrWhiteSpace($Domains)) {

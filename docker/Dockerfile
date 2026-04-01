@@ -23,7 +23,7 @@ COPY claude-switch.py /usr/local/bin/claude-switch.py
 RUN printf '#!/bin/sh\nexec python3 /usr/local/bin/claude-switch.py "$@"\n' > /usr/local/bin/cs \
     && chmod +x /usr/local/bin/claude-switch.py /usr/local/bin/cs
 
-WORKDIR /workspace
+WORKDIR /home/agent
 
 ENTRYPOINT ["/usr/local/bin/boxer-entrypoint.sh"]
 CMD ["sleep", "infinity"]

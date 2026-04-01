@@ -327,10 +327,7 @@ function Install-ClaudeSwitcher {
 
     docker cp "$ScriptPath" "${Name}:/usr/local/bin/claude-switch.py"
 
-    docker exec $Name bash -c '
-        printf "#!/bin/sh\nexec python3 /usr/local/bin/claude-switch.py \"\$@\"\n" > /usr/local/bin/cs
-        chmod +x /usr/local/bin/claude-switch.py /usr/local/bin/cs
-    '
+    docker exec $Name bash -c 'printf "#!/bin/sh\nexec python3 /usr/local/bin/claude-switch.py \"\$@\"\n" > /usr/local/bin/cs && chmod +x /usr/local/bin/claude-switch.py /usr/local/bin/cs'
 
     docker exec $Name chown "$($script:BOXER_CONTAINER_USER):$($script:BOXER_CONTAINER_USER)" `
         /usr/local/bin/claude-switch.py /usr/local/bin/cs 2>&1 | Out-Null
@@ -341,9 +338,5 @@ function Set-BoxerCredentialPermissions {
 
     $destDir = "$($script:BOXER_CONTAINER_HOME)/.claude"
 
-    docker exec $Name bash -c @"
-        if [ -d '$destDir/profiles' ]; then
-            find '$destDir/profiles' -name '*.json' -exec chmod 600 {} + 2>/dev/null || true
-        fi
-"@ 2>&1 | Out-Null
+    docker exec $Name bash -c "if [ -d '$destDir/profiles' ]; then find '$destDir/profiles' -name '*.json' -exec chmod 600 {} + 2>/dev/null || true; fi" 2>&1 | Out-Null
 }

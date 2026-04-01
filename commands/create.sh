@@ -90,6 +90,11 @@ HELP
     local docker_repo_path
     docker_repo_path="$(resolve_path "$repo_path")"
 
+    # Workspace mount point inside the container, named after the repo
+    local repo_basename
+    repo_basename="$(basename "$repo_path")"
+    local workspace="${BOXER_CONTAINER_HOME}/${repo_basename}"
+
     # Ensure the boxer image is built
     ensure_image
 
@@ -107,6 +112,7 @@ HELP
     cmd+=(--label "boxer.created.at=$(date -u +%Y-%m-%dT%H:%M:%SZ)")
     cmd+=(--label "boxer.version=$BOXER_VERSION")
     cmd+=(--label "boxer.network=$network")
+    cmd+=(--label "boxer.workspace=$workspace")
 
     # Resource limits
     cmd+=(--cpus "$cpu")
@@ -117,7 +123,7 @@ HELP
     cmd+=(--security-opt "no-new-privileges")
 
     # Repo mount (read-write for Claude to edit code)
-    cmd+=(-v "$docker_repo_path:$BOXER_CONTAINER_WORKSPACE")
+    cmd+=(-v "$docker_repo_path:$workspace")
 
     # Claude config persistence via named volumes
     cmd+=(-v "${BOXER_VOLUME_PREFIX}-${name}-claude-config:${BOXER_CONTAINER_HOME}/.claude")
@@ -152,7 +158,8 @@ HELP
     cmd+=(-e "GIT_CONFIG_VALUE_0=input")
     cmd+=(-e "BOXER_CONTAINER=true")
     cmd+=(-e "BOXER_CONTAINER_NAME=$name")
-    cmd+=(-e "BOXER_REPO_NAME=$(basename "$repo_path")")
+    cmd+=(-e "BOXER_REPO_NAME=$repo_basename")
+    cmd+=(-e "BOXER_WORKSPACE=$workspace")
 
     # Extra firewall domains
     if [[ -n "$extra_domains" ]]; then

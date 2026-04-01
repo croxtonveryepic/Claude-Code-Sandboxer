@@ -26,8 +26,10 @@ To launch Claude Code directly, use: boxer claude <name>
 
     Initialize-BoxerContainer $Name
 
+    $workspace = Get-ContainerLabel -Name $Name -Label "boxer.workspace"
+
     Write-BoxerInfo "Opening shell in '$Name'..."
-    docker exec -it --user $script:BOXER_CONTAINER_USER $Name bash
+    docker exec -it -w $workspace --user $script:BOXER_CONTAINER_USER $Name bash
 
     Write-BoxerInfo "Shell exited. Container '$Name' is still running."
     Write-BoxerInfo "  Re-enter:  boxer start $Name"
@@ -104,8 +106,47 @@ function Initialize-BoxerContainer {
     # Ensure ~/.claude directory exists for config sync
     docker exec $Name mkdir -p "$($script:BOXER_CONTAINER_HOME)/.claude" 2>&1 | Out-Null
 
+    # Keep claude-switch.py (cs) up to date inside the container
+    Sync-BoxerClaudeSwitcher $Name
+
+    # Freshen host's active profile before syncing (captures token rotation)
+    Invoke-BoxerFreshenHostProfile
+
     # Sync Claude Code config (rules, settings, agents, profiles, etc.)
     Sync-BoxerClaudeConfig $Name
+
+    # Sync ~/.claude.json (onboarding state, user metadata) so Claude Code
+    # doesn't trigger a first-run login flow inside the container.
+    Sync-BoxerClaudeJson $Name
+
+    # Auto-apply host's active profile in containers without credentials
+    Apply-InitialProfile $Name
+}
+
+# Update claude-switch.py and the cs wrapper in the container from the host's copy
+function Sync-BoxerClaudeSwitcher {
+    param([string]$Name)
+
+    $csSrc = Join-Path $script:BOXER_ROOT "claude-switch.py"
+    if (-not (Test-Path $csSrc)) { return }
+
+    docker cp $csSrc "${Name}:/usr/local/bin/claude-switch.py"
+
+    docker exec $Name bash -c 'printf "#!/bin/sh\nexec python3 /usr/local/bin/claude-switch.py \"\$@\"\n" > /usr/local/bin/cs && chmod +x /usr/local/bin/claude-switch.py /usr/local/bin/cs'
+
+    docker exec $Name chown "$($script:BOXER_CONTAINER_USER):$($script:BOXER_CONTAINER_USER)" `
+        /usr/local/bin/claude-switch.py /usr/local/bin/cs 2>&1 | Out-Null
+}
+
+# Freshen the host's active profile so synced tokens are current
+function Invoke-BoxerFreshenHostProfile {
+    $csScript = Join-Path $script:BOXER_ROOT "claude-switch.py"
+    if (-not (Test-Path $csScript)) { return }
+
+    $py = Resolve-HostPython
+    if (-not $py) { return }
+
+    & $py $csScript freshen --quiet 2>&1 | Out-Null
 }
 
 function Sync-BoxerClaudeConfig {
@@ -149,4 +190,52 @@ function Sync-BoxerClaudeConfig {
 
     # Restrict profile file permissions (contain OAuth refresh tokens)
     docker exec $Name find "$destDir/profiles" -name '*.json' -exec chmod 600 {} + 2>&1 | Out-Null
+}
+
+# Sync ~/.claude.json from the host into the container.
+# This file lives at $HOME/.claude.json (not inside ~/.claude/) and contains
+# onboarding flags (hasCompletedOnboarding, userID, etc.) that Claude Code
+# checks on startup. Without it, Claude triggers its first-run login flow
+# even when valid OAuth tokens are present in .credentials.json.
+# The oauthAccount key is intentionally left for cs use to overwrite with
+# the correct profile's credentials via its merge-write.
+function Sync-BoxerClaudeJson {
+    param([string]$Name)
+
+    $src = Join-Path $HOME ".claude.json"
+    if (-not (Test-Path $src)) { return }
+
+    $dest = "$($script:BOXER_CONTAINER_HOME)/.claude.json"
+
+    docker cp $src "${Name}:${dest}"
+    docker exec $Name chown "$($script:BOXER_CONTAINER_USER):$($script:BOXER_CONTAINER_USER)" $dest 2>&1 | Out-Null
+    docker exec $Name chmod 600 $dest 2>&1 | Out-Null
+}
+
+# Auto-apply the host's active profile when a container has no credentials yet.
+# This handles the common flow: cs use <profile> on host → boxer claude <name>.
+function Apply-InitialProfile {
+    param([string]$Name)
+
+    $credsFile = "$($script:BOXER_CONTAINER_HOME)/.claude/.credentials.json"
+
+    # Skip if container already has credentials
+    $null = docker exec $Name test -f $credsFile 2>&1
+    if ($LASTEXITCODE -eq 0) { return }
+
+    # Read host's active profile name
+    $hostActive = Join-Path $HOME ".claude" "profiles" ".active"
+    if (-not (Test-Path $hostActive)) { return }
+
+    try {
+        $activeData = Get-Content $hostActive -Raw | ConvertFrom-Json
+        $activeProfile = $activeData.profile
+    } catch {
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($activeProfile)) { return }
+
+    Write-BoxerInfo "Applying profile '$activeProfile' to new container..."
+    docker exec --user $script:BOXER_CONTAINER_USER $Name bash -c "command -v cs >/dev/null 2>&1 && cs use $activeProfile" 2>&1 | Out-Null
 }

@@ -10,7 +10,6 @@ $script:BOXER_DEFAULT_MEMORY = "8g"
 $script:BOXER_DEFAULT_NETWORK = "restricted"
 
 # Container paths
-$script:BOXER_CONTAINER_WORKSPACE = "/workspace"
 $script:BOXER_CONTAINER_USER = "agent"
 $script:BOXER_CONTAINER_HOME = "/home/agent"
 

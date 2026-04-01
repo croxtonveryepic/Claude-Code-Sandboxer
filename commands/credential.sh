@@ -364,10 +364,7 @@ _install_claude_switcher() {
 
     MSYS_NO_PATHCONV=1 docker cp "$script_path" "${name}:/usr/local/bin/claude-switch.py"
 
-    docker exec "$name" bash -c '
-        printf "#!/bin/sh\nexec python3 /usr/local/bin/claude-switch.py \"\$@\"\n" > /usr/local/bin/cs
-        chmod +x /usr/local/bin/claude-switch.py /usr/local/bin/cs
-    '
+    docker exec "$name" bash -c 'printf "#!/bin/sh\nexec python3 /usr/local/bin/claude-switch.py \"\$@\"\n" > /usr/local/bin/cs && chmod +x /usr/local/bin/claude-switch.py /usr/local/bin/cs'
 
     docker exec "$name" chown "${BOXER_CONTAINER_USER}:${BOXER_CONTAINER_USER}" \
         /usr/local/bin/claude-switch.py /usr/local/bin/cs 2>/dev/null || true
@@ -378,9 +375,5 @@ _harden_credential_permissions() {
     local name="$1"
     local dest_dir="${BOXER_CONTAINER_HOME}/.claude"
 
-    docker exec "$name" bash -c "
-        if [ -d '$dest_dir/profiles' ]; then
-            find '$dest_dir/profiles' -name '*.json' -exec chmod 600 {} + 2>/dev/null || true
-        fi
-    "
+    docker exec "$name" bash -c "if [ -d '$dest_dir/profiles' ]; then find '$dest_dir/profiles' -name '*.json' -exec chmod 600 {} + 2>/dev/null || true; fi"
 }

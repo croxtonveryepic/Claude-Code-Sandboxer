@@ -48,6 +48,8 @@ Options:
         Stop-BoxerWithError "Container '$Name' is not running. See logs above."
     }
 
+    $workspace = Get-ContainerLabel -Name $Name -Label "boxer.workspace"
+
     # Build Claude CLI args
     $claudeArgs = @()
     if ($Resume) { $claudeArgs += "--resume" }
@@ -68,7 +70,7 @@ Options:
 
     # Launch Claude Code CLI
     Write-BoxerInfo "Launching Claude Code in '$Name'..."
-    $execCmd = @("exec", "-it", "--user", $script:BOXER_CONTAINER_USER, $Name, "claude", "--dangerously-skip-permissions") + $claudeArgs
+    $execCmd = @("exec", "-it", "-w", $workspace, "--user", $script:BOXER_CONTAINER_USER, $Name, "claude", "--dangerously-skip-permissions") + $claudeArgs
     Write-BoxerDebug "docker $($execCmd -join ' ')"
     & docker @execCmd
 
