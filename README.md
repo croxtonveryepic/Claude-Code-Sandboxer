@@ -20,7 +20,7 @@ This installs the `boxer` command to your PowerShell profile and `~/bin`. Restar
 ```powershell
 boxer create /repo/path project-name
 boxer start project-name                             #      it's that easy!
-/workspace$ claude --dangerously-skip-permissions    # <--- this is safe!
+/workspace$ claude --dangerously-skip-permissions    # <--- this is safe! (probably!)
 ```
 
 ## Credential Management
