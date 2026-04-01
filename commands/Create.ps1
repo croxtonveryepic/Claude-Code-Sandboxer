@@ -130,6 +130,7 @@ Options:
     $cmd += "-e", "GIT_CONFIG_KEY_0=core.autocrlf"
     $cmd += "-e", "GIT_CONFIG_VALUE_0=input"
     $cmd += "-e", "BOXER_CONTAINER=true"
+    $cmd += "-e", "BOXER_CONTAINER_NAME=$Name"
     $cmd += "-e", "BOXER_REPO_NAME=$(Split-Path $RepoPath -Leaf)"
 
     # Extra firewall domains

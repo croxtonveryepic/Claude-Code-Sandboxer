@@ -125,3 +125,21 @@ container_status() {
     local name="$1"
     docker inspect --format '{{.State.Status}}' "$name" 2>/dev/null
 }
+
+# --- Python Resolution ---
+
+# Return a working host-side Python 3 command, skipping the
+# Windows Store stub (WindowsApps/python3).
+resolve_host_python() {
+    local cmd path
+    for cmd in python3 python; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            path="$(command -v "$cmd")"
+            if [[ "$path" != *"WindowsApps"* ]]; then
+                echo "$cmd"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}

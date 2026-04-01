@@ -141,6 +141,9 @@ function Sync-BoxerClaudeConfig {
         }
     }
 
+    # Remove host's .active marker — each container tracks its own active profile
+    docker exec $Name rm -f "$destDir/profiles/.active" 2>&1 | Out-Null
+
     # Fix ownership for everything we just copied
     docker exec $Name chown -R "$($script:BOXER_CONTAINER_USER):$($script:BOXER_CONTAINER_USER)" $destDir 2>&1 | Out-Null
 

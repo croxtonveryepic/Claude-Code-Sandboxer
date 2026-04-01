@@ -132,6 +132,9 @@ _sync_claude_config() {
         fi
     done
 
+    # Remove host's .active marker — each container tracks its own active profile
+    docker exec "$name" rm -f "$dest_dir/profiles/.active" 2>/dev/null || true
+
     # Fix ownership for everything we just copied
     docker exec "$name" chown -R "${BOXER_CONTAINER_USER}:${BOXER_CONTAINER_USER}" "$dest_dir" 2>/dev/null || true
 

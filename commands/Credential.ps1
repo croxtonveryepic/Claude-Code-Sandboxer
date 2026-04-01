@@ -22,29 +22,136 @@ function Invoke-BoxerCredential {
 Usage: boxer credential <subcommand>
 
 Subcommands:
-    sync                    Sync profiles, config, and Claude Switcher
-                            to all running boxer containers
+    sync [<name>]           Pull-merge-push: freshen host profile, pull
+                            freshened profiles from containers, merge by
+                            timestamp, then push to containers. If <name>
+                            is given, only sync that container.
+    pull                    Pull freshened profiles from running containers
+                            and merge into host profiles by timestamp
+    freshen                 Freshen the host's active profile from live
+                            credentials (captures token rotation)
     install <name>          Install/update Claude Switcher on a specific
                             running container
 
-The sync command pushes all saved profiles, Claude Code config, and the
-latest Claude Switcher (cs) into every running container. Stopped
-containers will receive updates on their next start.
-
-Active credentials are NOT synced — use 'cs use <profile>' inside each
-container to select an identity.
+The sync command performs a full bidirectional reconciliation:
+  1. Freshens the host's active profile from live credentials
+  2. Pulls freshened profiles from running containers
+  3. Merges by token_updated_at timestamp (newest wins)
+  4. Pushes merged profiles and config to containers
 "@
         return
     }
 
     switch ($SubCommand) {
-        "sync"    { Invoke-BoxerCredentialSync }
+        "sync"    { Invoke-BoxerCredentialSync -TargetName $Name }
+        "pull"    { Invoke-BoxerCredentialPull }
+        "freshen" { Invoke-BoxerCredentialFreshen }
         "install" { Invoke-BoxerCredentialInstall -Name $Name }
         default   { Stop-BoxerWithError "Unknown subcommand: $SubCommand. Run 'boxer credential --help' for usage." }
     }
 }
 
-function Invoke-BoxerCredentialSync {
+# ── Freshen (host-side) ─────────────────────────────────────────────
+
+function Invoke-BoxerCredentialFreshen {
+    $csScript = Resolve-ClaudeSwitchScript
+    if (-not $csScript) {
+        Stop-BoxerWithError "claude-switch.py not found at $(Join-Path $script:BOXER_ROOT 'claude-switch.py')"
+    }
+
+    $py = Resolve-HostPython
+    if (-not $py) {
+        Stop-BoxerWithError "Python not found. Install Python 3 and ensure 'python' is on PATH."
+    }
+
+    Write-BoxerInfo "Freshening host active profile..."
+    & $py $csScript freshen
+}
+
+# ── Pull from containers ────────────────────────────────────────────
+
+# Read token_updated_at from a profile JSON file, normalising Z -> +00:00.
+# Returns the timestamp string, or the epoch fallback on error.
+function Read-ProfileTimestamp {
+    param([string]$FilePath)
+    $py = Resolve-HostPython
+    if (-not $py) { return "1970-01-01T00:00:00+00:00" }
+    $result = & $py -c @"
+import json, sys
+d = json.load(open(sys.argv[1], 'r'))
+ts = d.get('token_updated_at', '1970-01-01T00:00:00+00:00')
+if ts.endswith('Z'):
+    ts = ts[:-1] + '+00:00'
+print(ts)
+"@ $FilePath 2>&1
+    if ($LASTEXITCODE -ne 0) { return "1970-01-01T00:00:00+00:00" }
+    return "$result".Trim()
+}
+
+function Pull-ContainerProfiles {
+    param([string]$Name)
+
+    $hostProfilesDir = Join-Path $HOME ".claude" "profiles"
+    $containerProfilesDir = "$($script:BOXER_CONTAINER_HOME)/.claude/profiles"
+
+    # Freshen the container's active profile first
+    docker exec --user $script:BOXER_CONTAINER_USER $Name `
+        bash -c 'command -v cs >/dev/null 2>&1 && cs freshen --quiet' 2>&1 | Out-Null
+
+    # Create temp dir for pulling
+    $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) "boxer-pull-$Name-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+
+    try {
+        # Copy container profiles to temp dir
+        $cpOutput = docker cp "${Name}:${containerProfilesDir}/." "$tmpDir/" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-BoxerInfo "  ${Name}: no profiles to pull"
+            return
+        }
+
+        # Merge each profile by timestamp
+        $updated = 0
+        $profileFiles = Get-ChildItem -Path $tmpDir -Filter "*.json" -ErrorAction SilentlyContinue
+        foreach ($containerFile in $profileFiles) {
+            $hostFile = Join-Path $hostProfilesDir $containerFile.Name
+            $profileName = [System.IO.Path]::GetFileNameWithoutExtension($containerFile.Name)
+
+            $containerTs = Read-ProfileTimestamp $containerFile.FullName
+            if ($containerTs -eq "1970-01-01T00:00:00+00:00" -and $LASTEXITCODE -ne 0) { continue }
+
+            if (-not (Test-Path $hostFile)) {
+                # New profile from container — adopt it
+                Copy-Item $containerFile.FullName $hostFile
+                $updated++
+                Write-BoxerInfo "  ${Name}: new profile '$profileName' pulled"
+                continue
+            }
+
+            $hostTs = Read-ProfileTimestamp $hostFile
+            if ($hostTs -eq "1970-01-01T00:00:00+00:00" -and $LASTEXITCODE -ne 0) { continue }
+
+            # INVARIANT: Both timestamps are produced by claude-switch.py's now_iso(),
+            # which always outputs UTC with +00:00 offset. Read-ProfileTimestamp
+            # normalises any trailing "Z" to "+00:00", so string comparison
+            # is equivalent to chronological ordering.
+            if ($containerTs -gt $hostTs) {
+                Copy-Item $containerFile.FullName $hostFile -Force
+                $updated++
+                Write-BoxerInfo "  ${Name}: profile '$profileName' updated (container token is newer)"
+            }
+        }
+
+        if ($updated -eq 0) {
+            Write-BoxerInfo "  ${Name}: all profiles current"
+        }
+    }
+    finally {
+        Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-BoxerCredentialPull {
     Assert-DockerRunning
 
     $containers = docker ps -a --filter "label=boxer.managed=true" --format '{{.Names}}' 2>&1
@@ -53,16 +160,109 @@ function Invoke-BoxerCredentialSync {
         return
     }
 
-    $csScript = Resolve-ClaudeSwitchScript
+    # Ensure host profiles dir exists
+    $hostProfilesDir = Join-Path $HOME ".claude" "profiles"
+    if (-not (Test-Path $hostProfilesDir)) {
+        New-Item -ItemType Directory -Path $hostProfilesDir -Force | Out-Null
+    }
+
     $containerList = $containers -split "`n" | Where-Object { $_.Trim() -ne "" }
+    $total = 0
+    $pulled = 0
+    $skipped = 0
+
+    foreach ($name in $containerList) {
+        $name = $name.Trim()
+        $total++
+
+        $status = Get-ContainerStatus $name
+        if ($status -ne "running") {
+            Write-BoxerInfo "  ${name}: skipped (${status})"
+            $skipped++
+            continue
+        }
+
+        # Check if cs is installed
+        $null = docker exec $name test -f /usr/local/bin/cs 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-BoxerInfo "  ${name}: skipped (Claude Switcher not installed)"
+            $skipped++
+            continue
+        }
+
+        try { Pull-ContainerProfiles $name } catch {
+            Write-BoxerWarn "  ${name}: pull failed (non-fatal)"
+        }
+        $pulled++
+    }
+
+    Write-BoxerSuccess "Pull complete: $pulled pulled, $skipped skipped (of $total total)"
+}
+
+# ── Sync (pull-then-push) ───────────────────────────────────────────
+
+function Invoke-BoxerCredentialSync {
+    param(
+        [string]$TargetName
+    )
+
+    Assert-DockerRunning
+
+    # Validate target container if specified
+    if (-not [string]::IsNullOrWhiteSpace($TargetName)) {
+        Assert-BoxerContainer $TargetName
+        $targetStatus = Get-ContainerStatus $TargetName
+        if ($targetStatus -ne "running") {
+            Stop-BoxerWithError "Container '$TargetName' is not running (status: $targetStatus). Start it first with: boxer start $TargetName"
+        }
+    }
+
+    # Phase 1: Freshen host active profile
+    $csScript = Resolve-ClaudeSwitchScript
+    $py = Resolve-HostPython
+    if ($csScript -and $py) {
+        Write-BoxerInfo "Freshening host active profile..."
+        & $py $csScript freshen --quiet 2>&1 | Out-Null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($TargetName)) {
+        $containerList = @($TargetName)
+    } else {
+        $containers = docker ps -a --filter "label=boxer.managed=true" --format '{{.Names}}' 2>&1
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($containers)) {
+            Write-BoxerInfo "No boxer containers found."
+            return
+        }
+        $containerList = $containers -split "`n" | Where-Object { $_.Trim() -ne "" }
+    }
+
+    # Phase 2: Pull from running containers
+    Write-BoxerInfo "Pulling profiles from containers..."
+    $hostProfilesDir = Join-Path $HOME ".claude" "profiles"
+    if (-not (Test-Path $hostProfilesDir)) {
+        New-Item -ItemType Directory -Path $hostProfilesDir -Force | Out-Null
+    }
+
+    foreach ($name in $containerList) {
+        $name = "$name".Trim()
+        $status = Get-ContainerStatus $name
+        if ($status -eq "running") {
+            $null = docker exec $name test -f /usr/local/bin/cs 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                try { Pull-ContainerProfiles $name } catch {}
+            }
+        }
+    }
+
+    # Phase 3: Push to containers
+    Write-BoxerInfo "Pushing profiles to containers..."
 
     $total = 0
     $synced = 0
     $skipped = 0
-    $failed = 0
 
     foreach ($name in $containerList) {
-        $name = $name.Trim()
+        $name = "$name".Trim()
         $total++
 
         $status = Get-ContainerStatus $name
@@ -72,7 +272,7 @@ function Invoke-BoxerCredentialSync {
             continue
         }
 
-        Write-BoxerInfo "  ${name}: syncing..."
+        Write-BoxerInfo "  ${name}: pushing..."
 
         # Ensure ~/.claude directory exists
         docker exec $name mkdir -p "$($script:BOXER_CONTAINER_HOME)/.claude" 2>&1 | Out-Null
@@ -90,8 +290,10 @@ function Invoke-BoxerCredentialSync {
         $synced++
     }
 
-    Write-BoxerSuccess "Credential sync complete: $synced synced, $skipped skipped (stopped), $failed failed (of $total total)"
+    Write-BoxerSuccess "Credential sync complete: $synced synced, $skipped skipped (of $total total)"
 }
+
+# ── Install ──────────────────────────────────────────────────────────
 
 function Invoke-BoxerCredentialInstall {
     param([string]$Name)

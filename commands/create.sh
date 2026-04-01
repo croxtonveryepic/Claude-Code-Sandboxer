@@ -151,6 +151,7 @@ HELP
     cmd+=(-e "GIT_CONFIG_KEY_0=core.autocrlf")
     cmd+=(-e "GIT_CONFIG_VALUE_0=input")
     cmd+=(-e "BOXER_CONTAINER=true")
+    cmd+=(-e "BOXER_CONTAINER_NAME=$name")
     cmd+=(-e "BOXER_REPO_NAME=$(basename "$repo_path")")
 
     # Extra firewall domains

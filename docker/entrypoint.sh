@@ -22,6 +22,11 @@ if [[ "$(id -u)" == "0" ]]; then
     touch /tmp/.boxer-ready
     echo "[boxer:entrypoint] Readiness signal written to /tmp/.boxer-ready"
 
+    # Fix git "dubious ownership" for the bind-mounted workspace.
+    # The repo is owned by root but git runs as agent (uid 1000).
+    # The host .gitconfig is read-only, so we inject into /etc/gitconfig.
+    git config --system safe.directory /workspace
+
     # One-time hint about Claude Switcher — append to agent's .bashrc so it
     # surfaces on interactive shell login (not just in docker logs)
     if [[ -f /usr/local/bin/cs ]] && ! grep -q "boxer-cs-hint" /home/agent/.bashrc 2>/dev/null; then
@@ -32,6 +37,18 @@ if [ ! -f /tmp/.cs-hint-shown ] && command -v cs >/dev/null 2>&1; then
     touch /tmp/.cs-hint-shown
 fi
 HINT
+        chown agent:agent /home/agent/.bashrc
+    fi
+
+    # Auto-freshen active profile on shell login (captures token rotation).
+    # Uses flock to serialise concurrent freshen from multiple shells.
+    if [[ -f /usr/local/bin/cs ]] && ! grep -q "boxer-auto-freshen" /home/agent/.bashrc 2>/dev/null; then
+        cat >> /home/agent/.bashrc <<'FRESHEN'
+# boxer-auto-freshen
+if command -v cs >/dev/null 2>&1; then
+    ( flock -n 9 && cs freshen --quiet 2>/dev/null; ) 9>/tmp/.cs-freshen.lock &
+fi
+FRESHEN
         chown agent:agent /home/agent/.bashrc
     fi
 else

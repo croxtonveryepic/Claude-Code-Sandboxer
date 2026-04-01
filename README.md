@@ -23,20 +23,62 @@ boxer start project-name                             #      it's that easy!
 /workspace$ claude --dangerously-skip-permissions    # <--- this is safe!
 ```
 
-Sandboxer ships with `claude-switch.py`, which can optionally be used as a credential manager. To use it in a box, run `boxer credential install project-name` and (it will be aliased as `cs`). Then on your host machine:
+## Credential Management
+
+Sandboxer ships with `claude-switch.py` (aliased as `cs`), a credential manager that saves, switches, and auto-synchronizes Claude Code OAuth tokens across the host and containers. Claude Code automatically rotates its OAuth refresh token; `cs` detects these rotations and propagates the updated token back into the correct profile, regardless of which environment (host or container) performed the rotation.
+
+### Setup
 
 ```powershell
-cs save profile-name
+# 1. On the host: save your current Claude Code session as a named profile
+cs save work
+
+# 2. Push profiles and install cs into all running containers
 boxer credential sync
+
+# 3. Inside a container: activate a profile
+cs use work
 ```
 
-This will save the OAuth token, email, and org name from your currently-signed-in Claude Code session as a `cs` profile, then copy your `cs` profiles into your running containers. Then to copy the profiles to the place where Claude Code looks for them, run in your box:
+You can save multiple profiles if you have separate Anthropic accounts (e.g. `work` and `personal`).
 
-```bash
-cs use profile-name
-```
+### Token Rotation Lifecycle
 
-...and now you don't have to deal with the login flow in a container with no browser. As the name implies, `claude-switch.py` lets you save multiple profiles, if you have Anthropic accounts for both work and personal use.
+Token freshening happens automatically at several points:
+
+1. **Pre-session** (`boxer claude <name>`): Before launching Claude Code, `cs freshen` runs in the container to capture any rotation from a prior session.
+2. **Post-session** (`boxer claude <name>`): After the Claude session exits, `cs freshen` runs again to capture any rotation that occurred during the session, then the freshened profile is pulled back to the host.
+3. **Shell login**: Each time you open a shell in a container, a background `cs freshen` runs (serialized with `flock` to avoid races).
+4. **Credential sync** (`boxer credential sync`): Performs a full bidirectional reconciliation — freshens the host profile, pulls from all containers, merges by timestamp (newest wins), then pushes to all containers.
+
+### `cs` Commands (inside containers or on the host)
+
+| Command | Description |
+| --- | --- |
+| `cs save <name>` | Capture the current Claude Code session as a named profile |
+| `cs save <name> --overwrite` | Overwrite an existing profile |
+| `cs use <name>` | Switch to a named profile (auto-freshens the outgoing profile) |
+| `cs status` | Show all profiles with active indicator and staleness detection |
+| `cs freshen` | Update the active profile from live credentials |
+| `cs freshen --force` | Reconstruct `.active` from the live token if missing/corrupt, then freshen |
+| `cs freshen --all` | Migrate all profiles to v2 schema, synthesize `.active` if missing, then freshen |
+
+### `boxer credential` Subcommands
+
+| Command | Description |
+| --- | --- |
+| `boxer credential sync` | Full bidirectional sync (freshen, pull, merge by timestamp, push) |
+| `boxer credential pull` | Pull freshened profiles from all running containers to the host |
+| `boxer credential freshen` | Freshen the host's active profile from live credentials |
+| `boxer credential install <name>` | Install/update Claude Switcher in a specific container |
+
+### Recovery
+
+If the `.active` marker file is lost or corrupted:
+
+- **`cs freshen --force`** — reconstructs `.active` by matching the live token against saved profiles, then freshens.
+- **`cs freshen --all`** — same recovery, plus migrates any v1 profiles to v2 schema.
+- **`cs save <name> --overwrite`** — last resort: re-captures the current session from scratch.
 
 ## Commands
 

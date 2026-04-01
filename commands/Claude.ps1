@@ -61,11 +61,27 @@ Options:
         $claudeArgs += $Model
     }
 
+    # Pre-session: freshen the container's active profile (captures any
+    # prior rotation that was never saved)
+    docker exec --user $script:BOXER_CONTAINER_USER $Name `
+        bash -c 'command -v cs >/dev/null 2>&1 && cs freshen --quiet' 2>&1 | Out-Null
+
     # Launch Claude Code CLI
     Write-BoxerInfo "Launching Claude Code in '$Name'..."
     $execCmd = @("exec", "-it", "--user", $script:BOXER_CONTAINER_USER, $Name, "claude", "--dangerously-skip-permissions") + $claudeArgs
     Write-BoxerDebug "docker $($execCmd -join ' ')"
     & docker @execCmd
+
+    # Post-session: capture any token rotation from the Claude session
+    Write-BoxerInfo "Capturing credential state..."
+    docker exec --user $script:BOXER_CONTAINER_USER $Name `
+        bash -c 'command -v cs >/dev/null 2>&1 && cs freshen --quiet' 2>&1 | Out-Null
+
+    # Pull freshened profile back to host
+    # (Pull-ContainerProfiles is defined in Credential.ps1, loaded by the dispatcher)
+    if (Get-Command Pull-ContainerProfiles -ErrorAction SilentlyContinue) {
+        try { Pull-ContainerProfiles $Name } catch {}
+    }
 
     Write-BoxerInfo "Claude session ended. Container '$Name' is still running."
     Write-BoxerInfo "  Re-enter:  boxer claude $Name"

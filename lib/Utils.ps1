@@ -116,3 +116,20 @@ function Get-ContainerStatus {
     if ($LASTEXITCODE -ne 0) { return $null }
     return $status.Trim()
 }
+
+# --- Python Resolution ---
+
+function Resolve-HostPython {
+    <#
+    .SYNOPSIS
+        Return the name of a working host-side Python 3 command,
+        skipping the Windows Store stub (WindowsApps/python3.exe).
+    #>
+    foreach ($cmd in @("python3", "python")) {
+        $found = Get-Command $cmd -ErrorAction SilentlyContinue
+        if ($found -and $found.Source -notmatch 'WindowsApps') {
+            return $cmd
+        }
+    }
+    return $null
+}

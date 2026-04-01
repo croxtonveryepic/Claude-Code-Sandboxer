@@ -52,6 +52,11 @@ HELP
     source "$BOXER_ROOT/commands/start.sh"
     _boxer_boot "$name"
 
+    # Pre-session: freshen the container's active profile (captures any
+    # prior rotation that was never saved)
+    docker exec --user "$BOXER_CONTAINER_USER" "$name" \
+        bash -c 'command -v cs >/dev/null 2>&1 && cs freshen --quiet' 2>/dev/null || true
+
     # Launch Claude Code CLI
     log_info "Launching Claude Code in '$name'..."
     local exec_cmd=(docker exec -it --user "$BOXER_CONTAINER_USER" "$name")
@@ -59,6 +64,15 @@ HELP
     exec_cmd+=("${claude_args[@]}")
 
     MSYS_NO_PATHCONV=1 "${exec_cmd[@]}" || true
+
+    # Post-session: capture any token rotation from the Claude session
+    log_info "Capturing credential state..."
+    docker exec --user "$BOXER_CONTAINER_USER" "$name" \
+        bash -c 'command -v cs >/dev/null 2>&1 && cs freshen --quiet' 2>/dev/null || true
+
+    # Pull freshened profile back to host
+    source "$BOXER_ROOT/commands/credential.sh"
+    _pull_container_profiles "$name" 2>/dev/null || true
 
     log_info "Claude session ended. Container '$name' is still running."
     log_info "  Re-enter:  boxer claude $name"
